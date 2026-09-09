@@ -1,17 +1,21 @@
+from django.db import transaction
 from rest_framework import generics, status
 from rest_framework.response import Response
-from .serializers import DashboardLoginSerializer, RegisterSerializer
+from .serializers import BreakGlassSerializer, BreakGlassSerializer, DashboardLoginSerializer, RegisterSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import CustomLoginSerializer
 from rest_framework.views import APIView
 from django.core.mail import send_mail
-from .models import CustomUser, OTPCode
+from .serializers import RejectKYCSerializer
+from .serializers import BreakGlassLogSerializer
+from .models import AuditLog, CustomUser, OTPCode
 from rest_framework.permissions import IsAuthenticated
 from complaints.models import Complaint
 from operations.models import EmergencyAnnouncement
 from .models import KYCRequest, Notification
 from rest_framework.generics import ListAPIView
 from .models import Notification
+from .serializers import PendingKYCSerializer
 from .serializers import NotificationSerializer
 from django.shortcuts import get_object_or_404
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -324,3 +328,218 @@ class CreateEmployeeView(APIView):
             }, status=status.HTTP_201_CREATED)
             
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class AdminPendingKYCView(generics.ListAPIView):
+    serializer_class = PendingKYCSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        
+        # 🛡️ 1. الحماية: فقط مدير النظام (Super Admin) يحق له رؤية هويات المواطنين
+        if not user.groups.filter(name='super_admin').exists() and not user.is_superuser:
+            raise PermissionDenied("غير مصرح لك. هذه الواجهة مخصصة لمدير النظام فقط.")
+            
+        # 🚀 2. جلب البيانات وتحسين الأداء:
+        # - نجلب الطلبات 'pending' فقط.
+        # - نستخدم select_related('citizen') لدمج بيانات المواطن (لنجلب الاسم) في استعلام Database واحد فقط!
+        return KYCRequest.objects.filter(
+            status=KYCRequest.Status.PENDING
+        ).select_related('citizen').order_by('submitted_at')
+class AdminApproveKYCView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, kyc_id, *args, **kwargs):
+        user = request.user
+        
+        # 🛡️ 1. الحماية: فقط مدير النظام (Super Admin) يمكنه الموافقة
+        if not user.groups.filter(name='super_admin').exists() and not user.is_superuser:
+            raise PermissionDenied("غير مصرح لك. هذه الواجهة مخصصة لمدير النظام فقط.")
+            
+        # 🧹 2. تنظيف المعرف (ID): تحسباً لو أرسل الفرونت إند 'kyc-1' بدلاً من '1'
+        clean_kyc_id = str(kyc_id).replace('kyc-', '')
+
+        # 🔍 3. جلب الطلب مع بيانات المواطن
+        try:
+            kyc_request = KYCRequest.objects.select_related('citizen').get(id=clean_kyc_id)
+        except KYCRequest.DoesNotExist:
+            return Response(
+                {"error": "طلب التوثيق غير موجود في النظام."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+        # ⚠️ 4. التحقق المنطقي: يجب أن يكون الطلب "قيد المراجعة"
+        if kyc_request.status != KYCRequest.Status.PENDING:
+            return Response(
+                {"error": f"لا يمكن تعديل هذا الطلب. حالته الحالية: {kyc_request.status}"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ⚙️ 5. بدء العملية المترابطة (Database Transaction)
+        with transaction.atomic():
+            # أ. تحديث حالة الطلب وإسناد المراجع (المدير الحالي)
+            kyc_request.status = KYCRequest.Status.APPROVED
+            kyc_request.reviewer = user
+            kyc_request.save(update_fields=['status', 'reviewer'])
+            
+            # ب. تحديث الملف الشخصي للمواطن (تغيير is_kyc_verified إلى True)
+            citizen = kyc_request.citizen
+            citizen.is_kyc_verified = True
+            citizen.save(update_fields=['is_kyc_verified'])
+            
+            # ج. التوثيق الأمني (تسجيل العملية في سجل التدقيق)
+            AuditLog.objects.create(
+                admin=user,
+                action_type="قبول توثيق KYC",
+                target_citizen=citizen,
+                details=f"تم قبول طلب التوثيق (الرقم الوطني: {kyc_request.national_id}) بواسطة المدير."
+            )
+            
+            # د. إرسال إشعار فوري لتطبيق المواطن ليفرح بالتوثيق 🥳
+            Notification.objects.create(
+                user=citizen,
+                title="تم توثيق حسابك بنجاح ✅",
+                body="مبروك! تمت مراجعة مستنداتك والموافقة عليها. حسابك الآن موثق بالكامل."
+            )
+
+        return Response({
+            "status": "success",
+            "message": "تم قبول طلب التوثيق وتحديث حالة حساب المواطن بنجاح."
+        }, status=status.HTTP_200_OK)
+class AdminRejectKYCView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, kyc_id, *args, **kwargs):
+        user = request.user
+        
+        # 🛡️ 1. الحماية: التأكد أن المستخدم مدير نظام (Super Admin)
+        if not user.groups.filter(name='super_admin').exists() and not user.is_superuser:
+            raise PermissionDenied("غير مصرح لك. هذه الواجهة مخصصة لمدير النظام فقط.")
+            
+        # 📝 2. التحقق من وجود "سبب الرفض"
+        serializer = RejectKYCSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        reason = serializer.validated_data['reason']
+            
+        # 🧹 3. تنظيف المعرف (ID)
+        clean_kyc_id = str(kyc_id).replace('kyc-', '')
+
+        # 🔍 4. جلب الطلب
+        try:
+            kyc_request = KYCRequest.objects.select_related('citizen').get(id=clean_kyc_id)
+        except KYCRequest.DoesNotExist:
+            return Response(
+                {"error": "طلب التوثيق غير موجود في النظام."}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+        # ⚠️ 5. التحقق المنطقي: يجب أن يكون الطلب "قيد المراجعة"
+        if kyc_request.status != KYCRequest.Status.PENDING:
+            return Response(
+                {"error": f"لا يمكن تعديل هذا الطلب. حالته الحالية: {kyc_request.status}"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ⚙️ 6. بدء العملية المترابطة (Database Transaction)
+        with transaction.atomic():
+            # أ. تحديث حالة الطلب إلى (مرفوض) وإسناد المراجع
+            kyc_request.status = KYCRequest.Status.REJECTED
+            kyc_request.reviewer = user
+            kyc_request.save(update_fields=['status', 'reviewer'])
+            
+            # ب. التوثيق الأمني (حفظ العملية مع السبب)
+            AuditLog.objects.create(
+                admin=user,
+                action_type="رفض توثيق KYC",
+                target_citizen=kyc_request.citizen,
+                details=f"تم رفض طلب التوثيق (الرقم الوطني: {kyc_request.national_id}). السبب المذكور: {reason}"
+            )
+            
+            # ج. إرسال إشعار فوري للمواطن يوضح له سبب الرفض ليقوم بالإصلاح ❌
+            Notification.objects.create(
+                user=kyc_request.citizen,
+                title="تم رفض طلب توثيق الحساب ❌",
+                body=f"نأسف، لم نتمكن من قبول مستندات التوثيق الخاصة بك. السبب: {reason}. يرجى تقديم طلب جديد وتصحيح الأخطاء لضمان تفعيل حسابك."
+            )
+
+        # 📤 7. إرسال الرد
+        return Response({
+            "status": "success",
+            "message": "تم رفض طلب التوثيق بنجاح وإشعار المواطن بالسبب."
+        }, status=status.HTTP_200_OK)
+class AdminBreakGlassView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        user = request.user
+        
+        # 🛡️ 1. الحماية الصارمة: فقط مدير النظام يمتلك صلاحية كسر الزجاج
+        if not user.groups.filter(name='super_admin').exists() and not user.is_superuser:
+            raise PermissionDenied("إنذار أمني: غير مصرح لك بكشف هويات المواطنين.")
+            
+        # 📝 2. التحقق من صحة البيانات (السبب ورقم التذكرة)
+        serializer = BreakGlassSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        ticket_id_raw = serializer.validated_data['targetTicketId']
+        reason = serializer.validated_data['reason']
+        
+        # 🧹 تنظيف رقم التذكرة من رمز #
+        clean_ticket_id = ticket_id_raw.replace('#', '')
+
+        # 🔍 3. جلب التذكرة لمعرفة هوية المواطن الذي قدمها
+        try:
+            # نستخدم select_related لجلب بيانات المواطن في نفس الاستعلام
+            complaint = Complaint.objects.select_related('citizen').get(ticket_number=clean_ticket_id)
+        except Complaint.DoesNotExist:
+            return Response({"error": "البلاغ المطلوب غير موجود."}, status=status.HTTP_404_NOT_FOUND)
+            
+        citizen = complaint.citizen
+        
+        # 🆔 4. جلب الرقم الوطني من نظام الـ KYC
+        # نبحث عن طلب التوثيق المقبول لهذا المواطن
+        kyc = KYCRequest.objects.filter(citizen=citizen, status=KYCRequest.Status.APPROVED).first()
+        national_id = kyc.national_id if kyc else "غير موثق (لا يوجد رقم وطني)"
+
+        # ⚙️ 5. العملية الآمنة (Fail-Safe Transaction)
+        # إذا فشل حفظ السجل الأمني لأي سبب، لن يتم إرجاع بيانات المواطن
+        with transaction.atomic():
+            AuditLog.objects.create(
+                admin=user,
+                action_type="كسر الزجاج (كشف هوية)",
+                target_citizen=citizen,
+                details=f"تنبيه أمني: تم كشف هوية مقدم البلاغ رقم #{clean_ticket_id}. السبب المدخل: {reason}"
+            )
+
+        # 📤 6. إرجاع البيانات السرية للإدارة
+        return Response({
+            "status": "success",
+            "message": "تم كشف الهوية وتسجيل العملية في سجلات المراقبة الأمنية غير القابلة للحذف.",
+            "citizen_data": {
+                "fullName": citizen.full_name,
+                "email": citizen.email, # استخدمنا الإيميل لأنه وسيلة الاتصال المتاحة في المودل
+                "nationalId": national_id
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class AdminBreakGlassLogView(generics.ListAPIView):
+    serializer_class = BreakGlassLogSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        
+        # 🛡️ 1. الحماية: فقط مدير النظام (Super Admin) يحق له مراجعة السجلات الأمنية
+        if not user.groups.filter(name='super_admin').exists() and not user.is_superuser:
+            raise PermissionDenied("غير مصرح لك. هذه الواجهة مخصصة لمدير النظام فقط.")
+            
+        # 🚀 2. جلب البيانات وتحسين الأداء:
+        # نجلب فقط السجلات التي نوعها "كسر الزجاج"
+        # نستخدم select_related('admin') لمنع الـ N+1 Query عند جلب اسم المدير
+        # order_by('-action_time') لعرض الأحدث أولاً
+        return AuditLog.objects.filter(
+            action_type="كسر الزجاج (كشف هوية)"
+        ).select_related('admin').order_by('-action_time')

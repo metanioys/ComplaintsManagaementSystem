@@ -4,7 +4,7 @@ from .models import CustomUser, KYCRequest, AuditLog, Notification
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.password_validation import validate_password
 from rest_framework.exceptions import AuthenticationFailed
-
+import re
 class RegisterSerializer(serializers.ModelSerializer):
 
     password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
@@ -214,3 +214,62 @@ class CreateEmployeeSerializer(serializers.ModelSerializer):
         user.groups.add(group)
         
         return user
+class PendingKYCSerializer(serializers.ModelSerializer):
+    # الحقول المخصصة لتطابق طلب الفرونت إند
+    id = serializers.SerializerMethodField()
+    nationalId = serializers.CharField(source='national_id')
+    fullName = serializers.CharField(source='citizen.full_name')
+    dateSubmitted = serializers.DateTimeField(source='submitted_at')
+    frontPhoto = serializers.ImageField(source='front_id_image')
+    backPhoto = serializers.ImageField(source='back_id_image')
+
+    class Meta:
+        model = KYCRequest
+        fields = ['id', 'nationalId', 'fullName', 'dateSubmitted', 'frontPhoto', 'backPhoto']
+
+    def get_id(self, obj):
+        # إضافة البادئة "kyc-" كما طلب الفرونت إند بالضبط
+        return f"kyc-{obj.id}"
+
+class RejectKYCSerializer(serializers.Serializer):
+    reason = serializers.CharField(
+        required=True,
+        error_messages={
+            'required': 'سبب الرفض مطلوب.',
+            'blank': 'لا يمكن أن يكون سبب الرفض فارغاً.'
+        }
+    )
+class BreakGlassSerializer(serializers.Serializer):
+    targetTicketId = serializers.CharField(
+        required=True, 
+        error_messages={'required': 'رقم التذكرة مطلوب.'}
+    )
+    reason = serializers.CharField(
+        required=True, 
+        error_messages={'required': 'سبب كشف الهوية (التفويض) مطلوب لتسجيله في النظام.'}
+    )
+class BreakGlassLogSerializer(serializers.ModelSerializer):
+    # تنسيق الحقول لتطابق الفرونت إند تماماً
+    id = serializers.SerializerMethodField()
+    timestamp = serializers.DateTimeField(source='action_time')
+    adminName = serializers.CharField(source='admin.full_name', default="مدير غير معروف")
+    targetTicketId = serializers.SerializerMethodField()
+    reason = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AuditLog
+        fields = ['id', 'timestamp', 'adminName', 'targetTicketId', 'reason']
+
+    def get_id(self, obj):
+        # إضافة البادئة aud-
+        return f"aud-{obj.id}"
+
+    def get_targetTicketId(self, obj):
+        # استخراج رقم التذكرة الذي يبدأ بـ #CMT- من داخل النص باستخدام Regex
+        match = re.search(r'رقم (#CMT-\d+)', obj.details)
+        return match.group(1) if match else "غير متوفر"
+
+    def get_reason(self, obj):
+        # استخراج ما بعد كلمة "السبب المدخل:"
+        match = re.search(r'السبب المدخل:\s*(.+)$', obj.details)
+        return match.group(1) if match else obj.details

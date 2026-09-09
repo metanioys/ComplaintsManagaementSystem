@@ -7,6 +7,8 @@ from .models import Complaint, Category, Attachment,ComplaintHistory
 from .serializers import ComplaintDetailSerializer, CreateComplaintSerializer, DispatcherNewTicketSerializer, LiaisonInboxSerializer
 from .serializers import MergeTicketsSerializer,SendUpdateSerializer
 import random
+from django.db.models import Count
+from rest_framework.exceptions import PermissionDenied
 from django.db import transaction
 from .serializers import EvaluateComplaintSerializer,Tier1NewTicketSerializer
 from .models import RatingChoices
@@ -647,3 +649,72 @@ class ResolveTicketView(APIView):
             "status": "success",
             "message": "تم تحويل حالة البلاغ إلى (تم الحل)، وتم إرسال إشعار للمواطن ليقوم بالتقييم."
         }, status=status.HTTP_200_OK)
+class AdminDashboardStatsView(APIView):
+    # لا يدخل هنا إلا المسجل دخوله (سنفحص الصلاحيات بالداخل)
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        
+        # 🛡️ 1. الحماية: التأكد أن المستخدم هو مدير النظام حصراً (Super Admin)
+        if not user.groups.filter(name='super_admin').exists() and not user.is_superuser:
+            raise PermissionDenied("غير مصرح لك. هذه الواجهة مخصصة لمدير النظام فقط.")
+
+        # 📊 2. جلب إجمالي التذاكر (استعلام سريع للعدد فقط)
+        total_tickets = Complaint.objects.count()
+
+        # 📈 3. حساب نسبة الإنجاز
+        completed_tickets = Complaint.objects.filter(
+            status__in=[Complaint.Status.RESOLVED, Complaint.Status.CLOSED]
+        ).count()
+        
+        # (حماية من خطأ القسمة على صفر DivisionByZero في حال كانت قاعدة البيانات فارغة)
+        completion_rate = 0
+        if total_tickets > 0:
+            completion_rate = int((completed_tickets / total_tickets) * 100)
+
+        # 👥 4. حساب عدد الموظفين النشطين (مأموري الفرز + خبراء الصيانة)
+        # distinct() تضمن عدم تكرار الموظف لو كان يمتلك أكثر من رتبة
+        active_employees = CustomUser.objects.filter(
+            groups__name__in=['tier1_dispatcher', 'tier2_liaison']
+        ).distinct().count()
+
+        # 🏢 5. تجميع التذاكر حسب التصنيف (Tickets By Category) - (GROUP BY SQL)
+        categories_stats = Complaint.objects.values('category__name_ar').annotate(
+            count=Count('id')
+        ).order_by('-count')
+
+        tickets_by_category = {}
+        worst_sector = "غير متوفر" # قيمة افتراضية
+
+        if categories_stats:
+            # القطاع الأسوأ هو الأول في القائمة لأننا رتبناها تنازلياً (-count)
+            worst_sector = categories_stats[0]['category__name_ar']
+            
+            # تحويل النتيجة لـ Dictionary كما يطلب الفرونت إند بالضبط
+            for cat in categories_stats:
+                # إذا كانت التذكرة بلا تصنيف (نظرياً لا يجب أن تحدث، لكن كودنا آمن)
+                name = cat['category__name_ar'] or "أخرى"
+                tickets_by_category[name] = cat['count']
+
+        # 🗺️ 6. تجميع التذاكر حسب المحافظة (Tickets By Governorate)
+        governorates_stats = Complaint.objects.values('governorate__name_ar').annotate(
+            count=Count('id')
+        )
+        
+        tickets_by_governorate = {}
+        for gov in governorates_stats:
+            name = gov['governorate__name_ar'] or "غير محدد"
+            tickets_by_governorate[name] = gov['count']
+
+        # 📤 7. بناء الرد النهائي ليتطابق 100% مع عقد الواجهة الأمامية (Frontend Contract)
+        data = {
+            "totalTickets": total_tickets,
+            "completionRate": completion_rate,
+            "worstSector": worst_sector,
+            "activeEmployees": active_employees,
+            "ticketsByGovernorate": tickets_by_governorate,
+            "ticketsByCategory": tickets_by_category
+        }
+
+        return Response(data, status=status.HTTP_200_OK)
