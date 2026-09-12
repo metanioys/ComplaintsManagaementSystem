@@ -53,7 +53,8 @@ MIDDLEWARE = [
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME': 'ctbaqm2a',
     'API_KEY': '828154548575893',
-    'API_SECRET': '**********'
+    'API_SECRET': '**********',
+    'SECURE': True,
 }
 
 ROOT_URLCONF = 'core_system.urls'
@@ -121,6 +122,7 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     )
 }
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 CSRF_TRUSTED_ORIGINS = [
