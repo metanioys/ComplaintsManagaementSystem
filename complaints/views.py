@@ -1,12 +1,13 @@
 from rest_framework.views import APIView, PermissionDenied
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from .models import Complaint, Category, Attachment,ComplaintHistory
-from .serializers import ComplaintDetailSerializer, CreateComplaintSerializer, DispatcherNewTicketSerializer, LiaisonInboxSerializer
+from .serializers import ComplaintDetailSerializer, CreateComplaintSerializer, DispatcherNewTicketSerializer, LiaisonInboxSerializer, TicketHistoryTimelineSerializer, VerifyComplaintSerializer
 from .serializers import MergeTicketsSerializer,SendUpdateSerializer
 import random
+from accounts.utils import send_push_notification
 from django.db.models import Count
 from rest_framework.exceptions import PermissionDenied
 from django.db import transaction
@@ -342,18 +343,27 @@ class DispatcherAssignTicketView(APIView):
         complaint.current_assignee = assignee # تعيين خبير الصيانة
         # نستخدم update_fields لتحسين الأداء
         complaint.save(update_fields=['status', 'current_assignee']) 
-        
-        # 📝 6. إنشاء سجل الحركة
+       # 📝 6. إنشاء سجل الحركة
         ComplaintHistory.objects.create(
             complaint=complaint,
-            action_by=user,          # مأمور الفرز (الذي قام بالعملية)
-            assigned_to=assignee,    # خبير الصيانة (الذي استلم الشكوى)
+            action_by=user,          
+            assigned_to=assignee,    
             old_status=old_status,
             new_status=Complaint.Status.ASSIGNED,
             notes="تمت الإحالة من قبل مأمور الفرز إلى خبير الصيانة."
         )
+
+        # 🚀 7. إشعار المواطن بأن بلاغه يتحرك (UX ممتاز)
+        # لم نقم بإنشاء Notification داخلي هنا لكي لا نزعج المواطن بكثرة الإشعارات الداخلية، 
+        # نكتفي بإشعار الهاتف اللطيف (Push)
+        send_push_notification(
+            user=complaint.citizen,
+            title="بلاغك قيد الاهتمام 🏃",
+            body=f"تم تحويل بلاغك رقم #{complaint.ticket_number} إلى فريق الصيانة المختص وهو الآن قيد المعالجة.",
+            ticket_id=complaint.ticket_number
+        )
         
-        # 📤 7. الرد المطابق لما طلبه توني
+        # 📤 8. الرد المطابق لما طلبه توني
         return Response({
             "status": "success",
             "message": "تم إحالة الشكوى لخبير الصيانة بنجاح."
@@ -574,15 +584,23 @@ class SendTicketUpdateView(APIView):
             new_status=complaint.status,
             notes=f"تم إرسال تحديث للمواطن: {message}"
         )
-
-        # 🔔 6. إرسال إشعار (Notification) للمواطن ليقرأه في تطبيقه!
+# 🔔 6. إرسال إشعار داخلي (في قاعدة البيانات)
         Notification.objects.create(
             user=complaint.citizen,
             title=f"تحديث جديد بخصوص بلاغك #{complaint.ticket_number}",
             body=message
         )
 
-        # 📤 7. إرسال الرد للفرونت إند
+        # 🚀 7. إرسال إشعار فايربيس (Push Notification) للهاتف
+        # نمرر ticket_id لكي يفتح الفرونت إند شاشة البلاغ مباشرة (Deep Linking)
+        send_push_notification(
+            user=complaint.citizen,
+            title=f"تحديث جديد لبلاغك #{complaint.ticket_number}",
+            body=message,
+            ticket_id=complaint.ticket_number
+        )
+
+        # 📤 8. إرسال الرد للفرونت إند
         return Response({
             "status": "success",
             "message": "تم إرسال التحديث للمواطن وإشعاره بنجاح."
@@ -635,19 +653,25 @@ class ResolveTicketView(APIView):
             new_status=Complaint.Status.RESOLVED,
             notes="قام خبير الصيانة بمعالجة المشكلة والإبلاغ عن حلها، بانتظار تقييم المواطن."
         )
-
-        # 🔔 7. إرسال الإشعار لتطبيق المواطن
-        # بما أننا استوردنا Notification سابقاً في هذا الملف، يمكننا استخدامه مباشرة
+# 🔔 7. إرسال الإشعار الداخلي لتطبيق المواطن
         Notification.objects.create(
             user=complaint.citizen,
             title="تم حل مشكلتك! 🥳",
-            body=f"تمت معالجة البلاغ رقم #{complaint.ticket_number}. يرجى الدخول للتطبيق وتقييم مستوى الخدمة لإغلاق البلاغ نهائياً."
+            body=f"تمت معالجة البلاغ رقم #{complaint.ticket_number}. يرجى تقييم الخدمة لإغلاق البلاغ نهائياً."
         )
 
-        # 📤 8. إرسال الرد
+        # 🚀 8. رنة هاتف المواطن (Firebase Push)
+        send_push_notification(
+            user=complaint.citizen,
+            title="تم حل مشكلتك! 🥳",
+            body="فريق الصيانة أبلغنا بانتهاء العمل، نرجو منك تقييم الخدمة للحصول على نقاطك.",
+            ticket_id=complaint.ticket_number
+        )
+
+        # 📤 9. إرسال الرد
         return Response({
             "status": "success",
-            "message": "تم تحويل حالة البلاغ إلى (تم الحل)، وتم إرسال إشعار للمواطن ليقوم بالتقييم."
+            "message": "تم تحويل حالة البلاغ إلى (تم الحل)، وتم إرسال إشعار للمواطن."
         }, status=status.HTTP_200_OK)
 class AdminDashboardStatsView(APIView):
     # لا يدخل هنا إلا المسجل دخوله (سنفحص الصلاحيات بالداخل)
@@ -718,3 +742,163 @@ class AdminDashboardStatsView(APIView):
         }
 
         return Response(data, status=status.HTTP_200_OK)
+
+class TicketHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, ticket_id, *args, **kwargs):
+        user = request.user
+        
+        # 🛡️ 1. الحماية: السماح للموظفين والإدارة فقط (مأمور الفرز + خبير الصيانة + الإدارة)
+        allowed_roles = ['tier1_dispatcher', 'tier2_liaison', 'super_admin']
+        user_roles = [group.name for group in user.groups.all()]
+        if not any(role in allowed_roles for role in user_roles):
+            raise PermissionDenied("غير مصرح لك بمشاهدة السجل الداخلي للشكوى.")
+
+        # 🧹 2. تنظيف رقم التذكرة (إزالة # إذا أرسلها الفرونت إند)
+        clean_ticket_id = ticket_id.replace('#', '')
+
+        # 🔍 3. جلب الشكوى للتأكد من وجودها
+        try:
+            complaint = Complaint.objects.get(ticket_number=clean_ticket_id)
+        except Complaint.DoesNotExist:
+            return Response({"error": "البلاغ غير موجود."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 🚀 4. جلب سجل الحركات (التاريخ) الخاص بهذه الشكوى
+        # استخدمنا select_related لجلب بيانات منفذ الحركة بسرعة بدون إرهاق السيرفر
+        history = ComplaintHistory.objects.filter(complaint=complaint)\
+            .select_related('action_by')\
+            .order_by('action_date') # الترتيب من الأقدم للأحدث (Timeline)
+
+        # 📦 5. تحويل البيانات وإرسالها
+        serializer = TicketHistoryTimelineSerializer(history, many=True)
+        
+        return Response({
+            "status": "success",
+            "ticket_id": f"#{complaint.ticket_number}",
+            "created_at": complaint.submitted_at, # أرسلنا تاريخ الإنشاء الأساسي هنا أيضاً
+            "history": serializer.data
+        }, status=status.HTTP_200_OK)
+
+class LiaisonFullArchiveView(generics.ListAPIView):
+    serializer_class = LiaisonInboxSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        
+        # 🛡️ 1. الحماية: فقط خبير الصيانة (أو الإدارة) يحق له رؤية أرشيفه
+        allowed_roles = ['tier2_liaison', 'super_admin']
+        user_roles = [group.name for group in user.groups.all()]
+        if not any(role in allowed_roles for role in user_roles):
+            raise PermissionDenied("غير مصرح لك. هذه الواجهة مخصصة لخبراء الصيانة.")
+
+        # 🚀 2. الاستعلام الذكي (O(1) Database Hit):
+        # نجلب كل التذاكر التي إما:
+        # أ) هو المسؤول الحالي عنها (current_assignee)
+        # ب) أو قام بأي حركة عليها في السابق (موجود في تاريخ الشكوى history__action_by)
+        # نستخدم distinct() لكي لا تتكرر التذكرة إذا كان قد قام بعدة حركات عليها!
+        
+        queryset = Complaint.objects.filter(
+            Q(current_assignee=user) | Q(history__action_by=user)
+        ).select_related(
+            'governorate', 'category', 'citizen', 'current_assignee'
+        ).prefetch_related(
+            'attachments', 
+            'citizen__kyc_requests', 
+            'duplicate_tickets', 
+            'history'
+        ).distinct().order_by('-updated_at') # ترتيب من الأحدث للأقدم
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        # تغليف المصفوفة داخل كائن ليكون الرد منظماً (Best Practice)
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            "status": "success",
+            "total_count": queryset.count(),
+            "archive": serializer.data
+        }, status=status.HTTP_200_OK)
+class ToggleUpvoteComplaintView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, ticket_number, *args, **kwargs):
+        user = request.user
+        
+        # 1. تنظيف رقم التذكرة (إذا أرسله الفرونت إند مع رمز #)
+        clean_ticket_number = ticket_number.replace('#', '')
+        
+        # 2. جلب الشكوى
+        try:
+            complaint = Complaint.objects.get(ticket_number=clean_ticket_number)
+        except Complaint.DoesNotExist:
+            return Response({"error": "البلاغ غير موجود."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 3. منع صاحب الشكوى نفسه من التأييد (لأنه من البديهي أنه متضرر) - خطوة احترافية
+        if complaint.citizen == user:
+            return Response(
+                {"error": "لا يمكنك تأييد بلاغ قمت أنت بتقديمه."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 4. منطق التبديل (Toggle): إضافة أو حذف الصوت
+        if complaint.upvotes.filter(id=user.id).exists():
+            complaint.upvotes.remove(user)
+            has_upvoted = False
+        else:
+            complaint.upvotes.add(user)
+            has_upvoted = True
+            
+        # 5. جلب العدد الجديد بعد التحديث
+        upvotes_count = complaint.upvotes.count()
+
+        # 🔥 6. الميزة الذكية (الترقية إلى أولوية عاجلة)
+        if upvotes_count >= 10 and not complaint.is_urgent:
+            complaint.is_urgent = True
+            complaint.save(update_fields=['is_urgent'])
+            
+            # توثيق أن النظام حولها لشكوى عاجلة تلقائياً
+            ComplaintHistory.objects.create(
+                complaint=complaint,
+                action_by=user, # أو يمكنك جعل action_by يقبل null ليدل على أنه (النظام)
+                old_status=complaint.status,
+                new_status=complaint.status,
+                notes="النظام الذكي: تم ترقية البلاغ إلى (أولوية عاجلة) لتجاوز عدد المتأثرين 10 أشخاص."
+            )
+
+        # إلغاء الحالة العاجلة إذا قل العدد عن 10 (إذا قام أحدهم بسحب صوته)
+        elif upvotes_count < 10 and complaint.is_urgent:
+            complaint.is_urgent = False
+            complaint.save(update_fields=['is_urgent'])
+
+        # 7. إرسال الرد المطابق تماماً لما طلبه الفرونت إند
+        return Response({
+            "upvotes_count": upvotes_count,
+            "has_upvoted": has_upvoted
+        }, status=status.HTTP_200_OK)
+class VerifyComplaintView(APIView):
+    # ⚠️ مهم جداً: هذا الـ API متاح للجميع (لأي شخص يمسح الـ QR Code)
+    permission_classes = [AllowAny]
+
+    def get(self, request, ticket_number, *args, **kwargs):
+        # 1. تنظيف رقم التذكرة
+        clean_ticket_number = ticket_number.replace('#', '')
+        
+        # 2. البحث عن الشكوى
+        try:
+            complaint = Complaint.objects.get(ticket_number=clean_ticket_number)
+        except Complaint.DoesNotExist:
+            return Response({
+                "is_authentic": False,
+                "error": "هذا المستند غير صالح أو مزور، رقم البلاغ غير موجود في النظام."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # 3. إرجاع البيانات
+        serializer = VerifyComplaintSerializer(complaint)
+        return Response({
+            "is_authentic": True,
+            "message": "مستند حكومي معتمد ومسجل في النظام الذكي.",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)

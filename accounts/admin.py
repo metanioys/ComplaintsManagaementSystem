@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import CustomUser, KYCRequest, AuditLog, OTPCode, Notification
+from .models import RewardVoucher
 
 @admin.register(CustomUser)
 class CustomUserAdmin(admin.ModelAdmin):
@@ -43,3 +44,9 @@ class NotificationAdmin(admin.ModelAdmin):
     list_display = ('user', 'title', 'is_read', 'created_at')
     list_filter = ('is_read', 'created_at')
     search_fields = ('user__email', 'title', 'body')
+
+@admin.register(RewardVoucher)
+class RewardVoucherAdmin(admin.ModelAdmin):
+    list_display = ('title', 'required_points', 'is_claimed', 'claimed_by', 'claimed_at')
+    list_filter = ('is_claimed', 'required_points')
+    search_fields = ('code', 'title', 'claimed_by__email')

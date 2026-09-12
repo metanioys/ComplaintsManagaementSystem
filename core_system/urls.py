@@ -2,7 +2,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
-from complaints.views import AdminDashboardStatsView, ResolveTicketView
+from complaints.views import AdminDashboardStatsView, LiaisonFullArchiveView, ResolveTicketView, TicketHistoryView
 from accounts.views import AdminApproveKYCView, AdminBreakGlassLogView, AdminBreakGlassView, AdminPendingKYCView, AdminRejectKYCView, DashboardSummaryView, MarkNotificationReadView, NotificationListView
 from complaints.views import DispatcherAssignTicketView, DispatcherNewTicketsView, DispatcherUpdateTicketStatusView, SendTicketUpdateView, Tier1AssignTicketView,LiaisonInboxView, Tier1NewTicketsView ,DispatcherUpdateTicketStatusView, MergeTicketsView
 from operations.views import AdminCreateEmergencyBannerView 
@@ -32,6 +32,8 @@ urlpatterns = [
     path('api/admin/emergency-banners', AdminCreateEmergencyBannerView.as_view(), name='admin-emergency-banner'),
     path('api/admin/security/break-glass', AdminBreakGlassView.as_view(), name='admin-break-glass'),
     path('api/admin/security/audit-logs', AdminBreakGlassLogView.as_view(), name='admin-audit-logs'),
+    path('api/tickets/<str:ticket_id>/history', TicketHistoryView.as_view(), name='ticket-history'),
+    path('api/liaison/tickets/archive', LiaisonFullArchiveView.as_view(), name='liaison-archive'),
 
 ]
 if settings.DEBUG:

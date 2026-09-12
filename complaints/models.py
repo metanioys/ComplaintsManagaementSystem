@@ -38,8 +38,15 @@ class Complaint(models.Model):
     
     # 3. بيانات الموقع (المحافظة تقبل الفراغ مؤقتاً لتسهيل الإرسال)
     location = models.CharField(max_length=255, verbose_name=_("الموقع التفصيلي"), default="غير محدد")
-    governorate = models.ForeignKey(Governorate, on_delete=models.PROTECT, null=True, blank=True, verbose_name=_("معرف المحافظة"))
     
+    # 🌍 الحقول الجغرافية الجديدة (الإحداثيات)
+    # max_digits=9, decimal_places=6 هو المعيار العالمي للـ GPS
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, verbose_name=_("خط العرض"))
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, verbose_name=_("خط الطول"))
+
+    governorate = models.ForeignKey(Governorate, on_delete=models.PROTECT, null=True, blank=True, verbose_name=_("معرف المحافظة"))
+    # الحقل الجديد للتسجيل الصوتي (مسموح أن يكون فارغاً لأنها ميزة اختيارية)
+    audio_file = models.FileField(upload_to='complaints_audio/', null=True, blank=True, verbose_name=_("تسجيل صوتي"))
     # 4. إدارة التذاكر (التكرار والموظفين)
     merged_to = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='duplicate_tickets', verbose_name=_("تذكرة الدمج الأساسية"))
     current_assignee = models.ForeignKey('accounts.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='current_tasks', verbose_name=_("المسؤول الحالي"))
@@ -52,6 +59,9 @@ class Complaint(models.Model):
     # 6. التواريخ
     submitted_at = models.DateTimeField(auto_now_add=True, verbose_name=_("تاريخ التقديم"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("تاريخ التحديث"))
+    # 7. ميزة التأييد (Upvotes) والحالة الطارئة
+    upvotes = models.ManyToManyField('accounts.CustomUser', related_name='upvoted_complaints', blank=True, verbose_name=_("المواطنون المتأثرون"))
+    is_urgent = models.BooleanField(default=False, verbose_name=_("أولوية عاجلة"))
 
     def __str__(self):
         return f"{self.ticket_number} - {self.title}"

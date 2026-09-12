@@ -74,7 +74,7 @@ else:
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
-            'NAME': 'tony',
+            'NAME': 'toni',
             'USER': 'root',
             'PASSWORD': 'gg12345678tt',
             'HOST': 'localhost',
@@ -126,12 +126,18 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=2),
     
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     
-    'ROTATE_REFRESH_TOKENS': True,
+    'ROTATE_REFRESH_TOKENS': False,
     'BLACKLIST_AFTER_ROTATION': True,
 }
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'ngrok-skip-browser-warning','authorization',
 ]
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10485760
+
+# (اختياري) يمكنك زيادة الحد الأقصى لعدد المتغيرات في الـ Form
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000

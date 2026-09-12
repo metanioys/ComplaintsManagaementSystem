@@ -1,6 +1,8 @@
 from django.db import transaction
 from rest_framework import generics, status
 from rest_framework.response import Response
+from .models import RewardVoucher
+from django.utils import timezone
 from .serializers import BreakGlassSerializer, BreakGlassSerializer, DashboardLoginSerializer, RegisterSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import CustomLoginSerializer
@@ -14,7 +16,8 @@ from complaints.models import Complaint
 from operations.models import EmergencyAnnouncement
 from .models import KYCRequest, Notification
 from rest_framework.generics import ListAPIView
-from .models import Notification
+from .models import UserDevice
+from .serializers import FCMTokenSerializer
 from .serializers import PendingKYCSerializer
 from .serializers import NotificationSerializer
 from django.shortcuts import get_object_or_404
@@ -543,3 +546,101 @@ class AdminBreakGlassLogView(generics.ListAPIView):
         return AuditLog.objects.filter(
             action_type="كسر الزجاج (كشف هوية)"
         ).select_related('admin').order_by('-action_time')
+
+class UpdateFCMTokenView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = FCMTokenSerializer(data=request.data)
+        if serializer.is_valid():
+            fcm_token = serializer.validated_data['fcm_token']
+            device_type = serializer.validated_data['device_type']
+            user = request.user
+
+            # نستخدم update_or_create لكي لا تتكرر التوكنز في قاعدة البيانات
+            # إذا كان التوكن موجوداً، نحدث المستخدم المالك له (في حال سجل شخص آخر دخوله من نفس الجهاز)
+            UserDevice.objects.update_or_create(
+                fcm_token=fcm_token,
+                defaults={'user': user, 'device_type': device_type}
+            )
+
+            return Response({"status": "success", "message": "تم تحديث توكن الإشعارات بنجاح."}, status=status.HTTP_200_OK)
+            
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class ClaimRewardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    # نستخدم transaction.atomic لضمان أنه إذا فشل خصم النقاط، لا يضيع الكود
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        user = request.user
+        
+        # الفرونت إند يجب أن يخبرنا ما هي فئة النقاط التي يريد المواطن صرفها (مثلاً: 50 أو 150)
+        points_tier = request.data.get('points_tier')
+        
+        if not points_tier:
+            return Response({"error": "يرجى تحديد فئة النقاط المطلوبة (points_tier)."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            points_tier = int(points_tier)
+        except ValueError:
+            return Response({"error": "فئة النقاط يجب أن تكون رقماً."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. التحقق من رصيد المواطن
+        if user.points < points_tier:
+            return Response({
+                "error": f"رصيد نقاطك ({user.points}) غير كافٍ لاستبدال هذه الهدية ({points_tier})."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. البحث عن كود متاح وحجزه فوراً (Database Lock لمنع التزامن)
+        # select_for_update() تمنع أي طلب آخر من سحب نفس الكود في نفس اللحظة
+        voucher = RewardVoucher.objects.select_for_update().filter(
+            required_points=points_tier, 
+            is_claimed=False
+        ).first()
+
+        if not voucher:
+            return Response({
+                "error": "عذراً، نفدت الهدايا لهذه الفئة حالياً. يرجى المحاولة لاحقاً."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # 3. تسليم الكود للمواطن وخصم النقاط
+        voucher.is_claimed = True
+        voucher.claimed_by = user
+        voucher.claimed_at = timezone.now()
+        voucher.save()
+
+        user.points -= points_tier
+        user.save(update_fields=['points'])
+
+        # 4. التوثيق في سجل الإشعارات للمواطن
+        Notification.objects.create(
+            user=user,
+            title="مبروك! تم استلام مكافأتك 🎁",
+            body=f"تم خصم {points_tier} نقطة واستلام كود: {voucher.title}."
+        )
+
+        # 5. الرد بالشكل الذي طلبه داني تماماً
+        return Response({
+            "status": "success",
+            "reward_title": voucher.title,
+            "code": voucher.code,
+            "instructions": voucher.instructions,
+            "new_points_total": user.points # أضفنا هذا لكي يحدث الفرونت إند شاشة المواطن
+        }, status=status.HTTP_200_OK)
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        # نستقبل التوكن الخاص بالجهاز من الفرونت إند
+        fcm_token = request.data.get('fcm_token')
+        
+        if fcm_token:
+            # نحذف التوكن من الداتابيز لحتى ما نبعت إشعارات لهذا الجهاز بعد الآن
+            UserDevice.objects.filter(user=request.user, fcm_token=fcm_token).delete()
+            
+        return Response({
+            "status": "success",
+            "message": "تم تسجيل الخروج ومسح توكن الإشعارات بنجاح."
+        }, status=status.HTTP_200_OK)

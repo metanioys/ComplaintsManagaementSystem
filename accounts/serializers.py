@@ -273,3 +273,6 @@ class BreakGlassLogSerializer(serializers.ModelSerializer):
         # استخراج ما بعد كلمة "السبب المدخل:"
         match = re.search(r'السبب المدخل:\s*(.+)$', obj.details)
         return match.group(1) if match else obj.details
+class FCMTokenSerializer(serializers.Serializer):
+    fcm_token = serializers.CharField(required=True)
+    device_type = serializers.ChoiceField(choices=['android', 'ios', 'web'], required=True)

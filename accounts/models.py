@@ -102,3 +102,24 @@ class Notification(models.Model):
 
     class Meta:
         ordering = ['-created_at'] # الترتيب من الأحدث للأقدم
+class UserDevice(models.Model):
+    user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='devices', verbose_name=_("المستخدم"))
+    fcm_token = models.CharField(max_length=255, unique=True, verbose_name=_("توكن الجهاز"))
+    device_type = models.CharField(max_length=20, default='android', verbose_name=_("نوع الجهاز"))
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user.email} - {self.device_type}"
+class RewardVoucher(models.Model):
+    id = models.AutoField(primary_key=True)
+    title = models.CharField(max_length=255, verbose_name=_("عنوان الهدية"))
+    code = models.CharField(max_length=100, unique=True, verbose_name=_("كود الهدية (Voucher)"))
+    required_points = models.IntegerField(verbose_name=_("النقاط المطلوبة"))
+    instructions = models.TextField(verbose_name=_("تعليمات الاستخدام"), default="يرجى إدخال هذا الكود في تطبيق المزود الخاص بك.")
+    
+    is_claimed = models.BooleanField(default=False, verbose_name=_("تم الاستلام؟"))
+    claimed_by = models.ForeignKey(CustomUser, on_delete=models.SET_NULL, null=True, blank=True, related_name='claimed_rewards', verbose_name=_("المواطن المستلم"))
+    claimed_at = models.DateTimeField(null=True, blank=True, verbose_name=_("تاريخ الاستلام"))
+
+    def __str__(self):
+        return f"{self.title} - {self.required_points} نقطة"

@@ -1,3 +1,5 @@
+import os
+
 from rest_framework import serializers
 
 from .models import Governorate, Category, Complaint, Attachment,ComplaintHistory
@@ -41,7 +43,14 @@ class CreateComplaintSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Complaint
-        fields = ['title', 'description', 'location', 'category_name']
+        fields = ['title', 'description', 'location', 'category_name','latitude', 'longitude','audio_file']
+    def validate_audio_file(self, value):
+        if value:
+            ext = os.path.splitext(value.name)[1].lower()
+            valid_extensions = ['.mp3', '.m4a']
+            if ext not in valid_extensions:
+                raise serializers.ValidationError(f"صيغة الملف غير مدعومة. يرجى رفع ملف بصيغة {valid_extensions}")
+        return value
 class ComplaintListSerializer(serializers.ModelSerializer):
     # تغيير أسماء الحقول لتطابق ما طلبه مطور الفرونت إند بالضبط
     ticket_id = serializers.ReadOnlyField(source='ticket_number')
@@ -65,18 +74,32 @@ class ComplaintDetailSerializer(serializers.ModelSerializer):
     
     # حقل مخصص لكي نعرف هل التذكرة تم تقييمها أم لا
     is_evaluated = serializers.SerializerMethodField()
-
+    audio_file_url = serializers.FileField(source='audio_file', read_only=True) 
+    upvotes_count = serializers.SerializerMethodField()
+    has_upvoted = serializers.SerializerMethodField()
+    attachments = AttachmentSerializer(many=True, read_only=True)
     class Meta:
         model = Complaint
         fields = [
             'ticket_id', 'title', 'description', 'location', 
             'category', 'status', 'created_at', 
-            'specialist_message', 'is_evaluated'
+            'specialist_message', 'is_evaluated','latitude', 'longitude','audio_file_url'
+            ,'upvotes_count', 'has_upvoted','attachments'
         ]
+        
 
     def get_is_evaluated(self, obj):
         # ترجع True إذا كان حقل التقييم يحتوي على داتا، و False إذا كان فارغاً
         return bool(obj.citizen_rating)
+    def get_upvotes_count(self, obj):
+        return obj.upvotes.count() # يجلب إجمالي عدد المصوتين
+
+    def get_has_upvoted(self, obj):
+        # التحقق مما إذا كان المستخدم الذي طلب الـ API موجوداً ضمن المصوتين
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.upvotes.filter(id=request.user.id).exists()
+        return False
 
 class EvaluateComplaintSerializer(serializers.Serializer):
     is_fixed = serializers.BooleanField(required=True)
@@ -89,13 +112,13 @@ class Tier1NewTicketSerializer(serializers.ModelSerializer):
     citizenId = serializers.SerializerMethodField()
     media = serializers.SerializerMethodField()
     isReopened = serializers.SerializerMethodField()
-
+    audio_file_url = serializers.FileField(source='audio_file', read_only=True) 
     class Meta:
         model = Complaint
         fields = [
             'id', 'governorate', 'category', 'description', 
             'date', 'status', 'citizenName', 'citizenId', 
-            'media', 'isReopened'
+            'media', 'isReopened','latitude', 'longitude', 'audio_file_url'
         ]
 
     def get_id(self, obj):
@@ -138,13 +161,13 @@ class DispatcherNewTicketSerializer(serializers.ModelSerializer):
     citizenId = serializers.SerializerMethodField()
     media = serializers.SerializerMethodField()
     isReopened = serializers.SerializerMethodField()
-
+    audio_file_url = serializers.FileField(source='audio_file', read_only=True)
     class Meta:
         model = Complaint
         fields = [
             'id', 'governorate', 'category', 'description', 
             'date', 'status', 'citizenName', 'citizenId', 
-            'media', 'isReopened'
+            'media', 'isReopened', 'latitude', 'longitude','audio_file_url'
         ]
 
     def get_id(self, obj):
@@ -192,6 +215,7 @@ class LiaisonInboxSerializer(serializers.ModelSerializer):
     mergedCount = serializers.SerializerMethodField()
     isReopened = serializers.SerializerMethodField()
     citizenFeedback = serializers.SerializerMethodField()
+    audio_file_url = serializers.FileField(source='audio_file', read_only=True)
 
     class Meta:
         model = Complaint
@@ -199,7 +223,7 @@ class LiaisonInboxSerializer(serializers.ModelSerializer):
             'id', 'governorate', 'category', 'description', 
             'date', 'status', 'assignedTo', 'citizenName', 
             'citizenId', 'media', 'mergedCount', 
-            'isReopened', 'citizenFeedback'
+            'isReopened', 'citizenFeedback','latitude', 'longitude', 'audio_file_url'
         ]
 
     def get_id(self, obj):
@@ -264,3 +288,32 @@ class SendUpdateSerializer(serializers.Serializer):
             'blank': 'لا يمكن إرسال رسالة فارغة.'
         }
     )
+class TicketHistoryTimelineSerializer(serializers.ModelSerializer):
+    actorName = serializers.CharField(source='action_by.full_name', default="غير معروف")
+    actorRole = serializers.SerializerMethodField()
+    timestamp = serializers.DateTimeField(source='action_date')
+    
+    class Meta:
+        model = ComplaintHistory
+        fields = ['id', 'actorName', 'actorRole', 'old_status', 'new_status', 'notes', 'timestamp']
+
+    def get_actorRole(self, obj):
+        # تحديد رتبة الشخص الذي قام بالإجراء لتظهر بشكل جميل في الـ Timeline
+        user = obj.action_by
+        if user.is_superuser or user.groups.filter(name='super_admin').exists():
+            return "مدير النظام"
+        elif user.groups.filter(name='tier1_dispatcher').exists():
+            return "مأمور الفرز"
+        elif user.groups.filter(name='tier2_liaison').exists():
+            return "خبير الصيانة"
+        return "المواطن"
+class VerifyComplaintSerializer(serializers.ModelSerializer):
+    # نرجع الأسماء بالعربي لتكون واضحة في صفحة التحقق
+    category = serializers.ReadOnlyField(source='category.name_ar')
+    governorate = serializers.ReadOnlyField(source='governorate.name_ar')
+    submitted_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S")
+
+    class Meta:
+        model = Complaint
+        # نرجع الحقول العامة فقط (بدون صور الهوية، وبدون اسم المواطن لحماية الخصوصية إذا أردت)
+        fields = ['ticket_number', 'title', 'status', 'category', 'governorate', 'submitted_at', 'is_urgent']
