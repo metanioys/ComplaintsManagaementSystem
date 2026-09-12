@@ -25,13 +25,16 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'cloudinary_storage',
     'django.contrib.staticfiles',
+    'cloudinary', 
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
     'accounts',
     'complaints',
-    'operations',
+    'operations'
+
 ]
 
 MIDDLEWARE = [
@@ -47,6 +50,11 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': 'ctbaqm2a',
+    'API_KEY': '828154548575893',
+    'API_SECRET': '**********'
+}
 
 ROOT_URLCONF = 'core_system.urls'
 
@@ -119,6 +127,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://*.ngrok-free.dev',
     'https://*.ngrok-free.app',
 ]
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

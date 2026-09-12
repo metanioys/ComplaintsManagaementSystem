@@ -143,7 +143,7 @@ class DashboardSummaryView(APIView):
         # 3. إحصائيات البلاغات (الشكاوى) الخاصة بهذا المواطن فقط
         active_count = Complaint.objects.filter(
             citizen=user,
-            status__in=[Complaint.Status.new
+            status__in=[Complaint.Status.NEW
                         , Complaint.Status.ASSIGNED, Complaint.Status.IN_PROGRESS]
         ).count()
 
