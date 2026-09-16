@@ -77,7 +77,7 @@ TEMPLATES = [
 WSGI_APPLICATION = 'core_system.wsgi.application'
 if 'DATABASE_URL' in os.environ:
     DATABASES = {
-        'default': dj_database_url.config(conn_max_age=600)
+        'default': dj_database_url.config(conn_max_age=0)
     }
 else:
     DATABASES = {
