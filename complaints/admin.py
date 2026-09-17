@@ -1,6 +1,7 @@
 from django.contrib import admin
 from .models import Governorate, Category, Complaint, Attachment, ComplaintHistory
-
+from accounts.utils import send_push_notification
+from accounts.models import Notification
 @admin.register(Governorate)
 class GovernorateAdmin(admin.ModelAdmin):
     list_display = ('id', 'name_ar', 'name_en')
@@ -25,25 +26,49 @@ class ComplaintHistoryInline(admin.TabularInline):
     can_delete = False
     def has_add_permission(self, request, obj=None):
         return False # منع الإضافة اليدوية للتاريخ من الإدمن
-
 @admin.register(Complaint)
 class ComplaintAdmin(admin.ModelAdmin):
     list_display = ('ticket_number', 'title', 'citizen', 'category', 'governorate', 'status', 'submitted_at')
     list_filter = ('status', 'category', 'governorate', 'citizen_rating', 'submitted_at')
     search_fields = ('ticket_number', 'title', 'citizen__email', 'citizen__full_name')
     readonly_fields = ('id', 'ticket_number', 'submitted_at', 'updated_at')
-    # دمج الـ Inlines هنا
     inlines = [AttachmentInline, ComplaintHistoryInline]
     
-    # تنسيق شكل الصفحة من الداخل
     fieldsets = (
-        ('المعلومات الأساسية', {
-            'fields': ('ticket_number', 'citizen', 'category', 'governorate', 'title', 'description', 'location')
-        }),
-        ('حالة وإدارة الشكوى', {
-            'fields': ('status', 'current_assignee', 'merged_to', 'specialist_message', 'citizen_rating')
-        }),
-        ('التواريخ', {
-            'fields': ('submitted_at', 'updated_at')
-        }),
+        # ... الكود الحالي ...
     )
+
+    # 👇 الكود الجديد الذي سنضيفه هنا 👇
+    def save_model(self, request, obj, form, change):
+        if change: # إذا كان هذا تعديلاً وليس إنشاء شكوى جديدة
+            # جلب الشكوى القديمة من قاعدة البيانات للمقارنة
+            old_obj = Complaint.objects.get(pk=obj.pk)
+            
+            if old_obj.status != obj.status: # إذا قام المدير بتغيير الحالة فعلاً
+                
+                # 1. توثيق الحركة في سجل الشكوى (Timeline) لكي لا تنكسر واجهة الفرونت إند
+                ComplaintHistory.objects.create(
+                    complaint=obj,
+                    action_by=request.user,
+                    old_status=old_obj.status,
+                    new_status=obj.status,
+                    notes="تم تحديث حالة البلاغ مباشرة من قبل الإدارة (عبر لوحة التحكم)."
+                )
+
+                # 2. إرسال إشعار داخلي (In-App Notification)
+                Notification.objects.create(
+                    user=obj.citizen,
+                    title="تحديث بخصوص بلاغك 📢",
+                    body=f"قامت الإدارة بتحديث حالة بلاغك رقم #{obj.ticket_number}."
+                )
+
+                # 3. إرسال إشعار الموبايل (Firebase Push Notification)
+                send_push_notification(
+                    user=obj.citizen,
+                    title="تحديث من الإدارة 📢",
+                    body=f"تم تغيير حالة البلاغ رقم #{obj.ticket_number}، افتح التطبيق لمعرفة التفاصيل.",
+                    ticket_id=obj.ticket_number
+                )
+
+        # حفظ التعديل النهائي في قاعدة البيانات
+        super().save_model(request, obj, form, change)

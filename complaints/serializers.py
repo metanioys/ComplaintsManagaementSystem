@@ -78,13 +78,14 @@ class ComplaintDetailSerializer(serializers.ModelSerializer):
     upvotes_count = serializers.SerializerMethodField()
     has_upvoted = serializers.SerializerMethodField()
     attachments = AttachmentSerializer(many=True, read_only=True)
+    is_owner = serializers.SerializerMethodField()
     class Meta:
         model = Complaint
         fields = [
             'ticket_id', 'title', 'description', 'location', 
             'category', 'status', 'created_at', 
             'specialist_message', 'is_evaluated','latitude', 'longitude','audio_file_url'
-            ,'upvotes_count', 'has_upvoted','attachments'
+            ,'upvotes_count', 'has_upvoted','attachments', 'is_owner'
         ]
         
 
@@ -99,6 +100,13 @@ class ComplaintDetailSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return obj.upvotes.filter(id=request.user.id).exists()
+        return False
+    # أضف هذه الدالة داخل كلاس ComplaintDetailSerializer
+    def get_is_owner(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            # استخدمنا citizen وليس user كما اقترح الفرونت إند
+            return obj.citizen == request.user
         return False
 
 class EvaluateComplaintSerializer(serializers.Serializer):

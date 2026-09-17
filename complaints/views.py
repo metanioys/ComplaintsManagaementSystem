@@ -7,6 +7,8 @@ from .models import Complaint, Category, Attachment,ComplaintHistory
 from .serializers import ComplaintDetailSerializer, CreateComplaintSerializer, DispatcherNewTicketSerializer, LiaisonInboxSerializer, TicketHistoryTimelineSerializer, VerifyComplaintSerializer
 from .serializers import MergeTicketsSerializer,SendUpdateSerializer
 import random
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 from accounts.utils import send_push_notification
 from django.db.models import Count
 from rest_framework.exceptions import PermissionDenied
@@ -94,7 +96,7 @@ class ComplaintListView(generics.ListAPIView):
             )
             
         return queryset
-
+    @method_decorator(never_cache)
     def list(self, request, *args, **kwargs):
         # قمنا بعمل Override لهذه الدالة لكي نغلف المصفوفة بكلمة "complaints" كما صممها توني
         queryset = self.get_queryset()
