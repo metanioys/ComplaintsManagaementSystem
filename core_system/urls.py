@@ -2,9 +2,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
-from complaints.views import AdminDashboardStatsView, LiaisonFullArchiveView, ResolveTicketView, TicketHistoryView
+from complaints.views import AdminDashboardStatsView, LiaisonFullArchiveView, ResolveTicketView, TicketHistoryView, DispatcherAssignTicketView, DispatcherNewTicketsView, DispatcherUpdateTicketStatusView, SendTicketUpdateView, Tier1AssignTicketView,LiaisonInboxView, Tier1NewTicketsView ,DispatcherUpdateTicketStatusView, MergeTicketsView
 from accounts.views import AdminApproveKYCView, AdminBreakGlassLogView, AdminBreakGlassView, AdminPendingKYCView, AdminRejectKYCView, DashboardSummaryView, MarkNotificationReadView, NotificationListView
-from complaints.views import DispatcherAssignTicketView, DispatcherNewTicketsView, DispatcherUpdateTicketStatusView, SendTicketUpdateView, Tier1AssignTicketView,LiaisonInboxView, Tier1NewTicketsView ,DispatcherUpdateTicketStatusView, MergeTicketsView
 from operations.views import AdminCreateEmergencyBannerView 
 
 

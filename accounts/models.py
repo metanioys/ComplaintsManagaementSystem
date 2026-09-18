@@ -3,7 +3,6 @@ from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.utils.translation import gettext_lazy as _
 import uuid
 
-# 1. إنشاء مدير مستخدمين مخصص يعتمد على الإيميل
 class CustomUserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
@@ -26,12 +25,9 @@ class CustomUserManager(BaseUserManager):
 
         return self.create_user(email, password, **extra_fields)
 
-# 2. تعديل نموذج المستخدم
 class CustomUser(AbstractUser):
-    # حذف حقل الـ username الافتراضي
     username = None 
     full_name = models.CharField(max_length=255, verbose_name=_("الاسم الكامل"), default="") 
-    # حذف حقل الـ role النصي لأننا سنعتمد على Groups
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name=_("الرقم التعريفي"))
     email = models.EmailField(_('البريد الإلكتروني'), unique=True)
@@ -39,8 +35,7 @@ class CustomUser(AbstractUser):
     is_kyc_verified = models.BooleanField(default=False, verbose_name=_("موثق KYC"))
     
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = [] # لا يوجد حقول إضافية إجبارية غير الإيميل والباسورد
-# إضافة قطاع الموظف (للمختصين وموظفي الفرز)
+    REQUIRED_FIELDS = [] 
     managed_governorates = models.ManyToManyField('complaints.Governorate', blank=True, verbose_name=_("المحافظات المسؤولة"))
     managed_categories = models.ManyToManyField('complaints.Category', blank=True, verbose_name=_("التصنيفات المسؤولة"))
     objects = CustomUserManager()
@@ -48,7 +43,6 @@ class CustomUser(AbstractUser):
     def __str__(self):
         return self.email
 
-# (باقي كود الـ models الخاص بـ KYCRequest و AuditLog يبقى كما هو تماماً كما كتبناه سابقاً)
 class KYCRequest(models.Model):
     class Status(models.TextChoices):
         PENDING = 'pending', _('قيد المراجعة')
@@ -72,7 +66,6 @@ class AuditLog(models.Model):
     details = models.TextField(verbose_name=_("التفاصيل"))
     action_time = models.DateTimeField(auto_now_add=True, verbose_name=_("تاريخ الإجراء"))
 
-# داخل accounts/models.py (أضفه في النهاية)
 import random
 from django.utils import timezone
 from datetime import timedelta
@@ -84,7 +77,6 @@ class OTPCode(models.Model):
     is_used = models.BooleanField(default=False)
 
     def is_valid(self):
-        # الكود صالح لمدة 10 دقائق فقط ولم يتم استخدامه مسبقاً
         expiration_time = self.created_at + timedelta(minutes=10)
         return timezone.now() <= expiration_time and not self.is_used
 
@@ -101,7 +93,7 @@ class Notification(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name=_("تاريخ الإنشاء"))
 
     class Meta:
-        ordering = ['-created_at'] # الترتيب من الأحدث للأقدم
+        ordering = ['-created_at'] 
 class UserDevice(models.Model):
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='devices', verbose_name=_("المستخدم"))
     fcm_token = models.CharField(max_length=255, unique=True, verbose_name=_("توكن الجهاز"))

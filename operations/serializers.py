@@ -18,7 +18,6 @@ class CreateEmergencyBannerSerializer(serializers.Serializer):
     )
 
     def validate_governorate(self, value):
-        # التحقق من أن المحافظة موجودة فعلاً إذا لم يختر "الكل"
         if value != "الكل":
             if not Governorate.objects.filter(name_ar=value).exists():
                 raise serializers.ValidationError(f"المحافظة '{value}' غير موجودة في النظام.")

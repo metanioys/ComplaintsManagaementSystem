@@ -12,20 +12,18 @@ class CategoryAdmin(admin.ModelAdmin):
     list_display = ('id', 'name_ar', 'name_en')
     search_fields = ('name_ar', 'name_en')
 
-# 🌟 ميزة الـ Inline لعرض المرفقات داخل الشكوى
 class AttachmentInline(admin.TabularInline):
     model = Attachment
-    extra = 0 # لا تعرض حقول إضافية فارغة
+    extra = 0 
     readonly_fields = ('uploaded_at',)
 
-# 🌟 ميزة الـ Inline لعرض تاريخ حركات الشكوى
 class ComplaintHistoryInline(admin.TabularInline):
     model = ComplaintHistory
     extra = 0
     readonly_fields = ('action_by', 'assigned_to', 'old_status', 'new_status', 'notes', 'action_date')
     can_delete = False
     def has_add_permission(self, request, obj=None):
-        return False # منع الإضافة اليدوية للتاريخ من الإدمن
+        return False 
 @admin.register(Complaint)
 class ComplaintAdmin(admin.ModelAdmin):
     list_display = ('ticket_number', 'title', 'citizen', 'category', 'governorate', 'status', 'submitted_at')
@@ -35,18 +33,14 @@ class ComplaintAdmin(admin.ModelAdmin):
     inlines = [AttachmentInline, ComplaintHistoryInline]
     
     fieldsets = (
-        # ... الكود الحالي ...
     )
 
-    # 👇 الكود الجديد الذي سنضيفه هنا 👇
     def save_model(self, request, obj, form, change):
-        if change: # إذا كان هذا تعديلاً وليس إنشاء شكوى جديدة
-            # جلب الشكوى القديمة من قاعدة البيانات للمقارنة
+        if change:
             old_obj = Complaint.objects.get(pk=obj.pk)
             
-            if old_obj.status != obj.status: # إذا قام المدير بتغيير الحالة فعلاً
+            if old_obj.status != obj.status: 
                 
-                # 1. توثيق الحركة في سجل الشكوى (Timeline) لكي لا تنكسر واجهة الفرونت إند
                 ComplaintHistory.objects.create(
                     complaint=obj,
                     action_by=request.user,
@@ -55,14 +49,12 @@ class ComplaintAdmin(admin.ModelAdmin):
                     notes="تم تحديث حالة البلاغ مباشرة من قبل الإدارة (عبر لوحة التحكم)."
                 )
 
-                # 2. إرسال إشعار داخلي (In-App Notification)
                 Notification.objects.create(
                     user=obj.citizen,
                     title="تحديث بخصوص بلاغك 📢",
                     body=f"قامت الإدارة بتحديث حالة بلاغك رقم #{obj.ticket_number}."
                 )
 
-                # 3. إرسال إشعار الموبايل (Firebase Push Notification)
                 send_push_notification(
                     user=obj.citizen,
                     title="تحديث من الإدارة 📢",
@@ -70,5 +62,4 @@ class ComplaintAdmin(admin.ModelAdmin):
                     ticket_id=obj.ticket_number
                 )
 
-        # حفظ التعديل النهائي في قاعدة البيانات
         super().save_model(request, obj, form, change)

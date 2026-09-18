@@ -1,4 +1,3 @@
-# إنشاء ملف accounts/urls.py
 from django.urls import path
 from .views import AdminLoginView, ChangePasswordView, ClaimRewardView, CreateEmployeeView, DashboardLoginView, LoginView, LogoutView, RegisterView , SendOTPView, SubmitKYCView, UpdateFCMTokenView, UpdateProfileView, VerifyOTPView, ResetPasswordView
 
@@ -6,7 +5,7 @@ from .views import AdminLoginView, ChangePasswordView, ClaimRewardView, CreateEm
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view(), name='login'), 
-    path('logout/', LogoutView.as_view(), name='logout'), # 👈 الرابط الجديد
+    path('logout/', LogoutView.as_view(), name='logout'), 
     path('admin-login/', AdminLoginView.as_view(), name='admin-login'),
     path('login/', DashboardLoginView.as_view(), name='dashboard-login'), 
     path('employees/create/', CreateEmployeeView.as_view(), name='create-employee'),

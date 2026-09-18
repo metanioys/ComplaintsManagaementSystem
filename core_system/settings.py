@@ -110,6 +110,9 @@ LANGUAGE_CODE = 'ar'
 TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_L10N = True
+LOCALE_PATHS = [
+    os.path.join(BASE_DIR, 'locale'),
+]
 USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
@@ -146,9 +149,6 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_HEADERS = list(default_headers) + [
     'ngrok-skip-browser-warning','authorization',
 ]
-
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10485760
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10485760
-
-# (اختياري) يمكنك زيادة الحد الأقصى لعدد المتغيرات في الـ Form
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000

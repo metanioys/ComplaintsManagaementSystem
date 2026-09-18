@@ -16,7 +16,6 @@ class RatingChoices(models.TextChoices):
         SATISFIED = 'satisfied', _('تم الحل - راضٍ')
         UNSATISFIED = 'unsatisfied', _('إصلاح سيء - غير راضٍ')
 
-    # استبدل حقل citizen_rating القديم بهذا:
 class Complaint(models.Model):
     class Status(models.TextChoices):
         NEW = 'newStatus', _('جديدة')
@@ -26,40 +25,30 @@ class Complaint(models.Model):
         REJECTED = 'rejected', _('مرفوضة')
         CLOSED = 'closed', _('مغلقة')
 
-    # 1. المعرفات الأساسية
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name=_("المعرف الفريد"))
     ticket_number = models.CharField(max_length=50, unique=True, verbose_name=_("رقم التذكرة"))
     
-    # 2. بيانات المواطن والمشكلة
     citizen = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='complaints', verbose_name=_("معرف المواطن"))
     category = models.ForeignKey(Category, on_delete=models.PROTECT, verbose_name=_("معرف التصنيف"))
     title = models.CharField(max_length=255, verbose_name=_("عنوان الشكوى"), default="بدون عنوان")
     description = models.TextField(verbose_name=_("وصف المشكلة"))
     
-    # 3. بيانات الموقع (المحافظة تقبل الفراغ مؤقتاً لتسهيل الإرسال)
     location = models.CharField(max_length=255, verbose_name=_("الموقع التفصيلي"), default="غير محدد")
     
-    # 🌍 الحقول الجغرافية الجديدة (الإحداثيات)
-    # max_digits=9, decimal_places=6 هو المعيار العالمي للـ GPS
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, verbose_name=_("خط العرض"))
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, verbose_name=_("خط الطول"))
 
     governorate = models.ForeignKey(Governorate, on_delete=models.PROTECT, null=True, blank=True, verbose_name=_("معرف المحافظة"))
-    # الحقل الجديد للتسجيل الصوتي (مسموح أن يكون فارغاً لأنها ميزة اختيارية)
     audio_file = models.FileField(upload_to='complaints_audio/', null=True, blank=True, verbose_name=_("تسجيل صوتي"))
-    # 4. إدارة التذاكر (التكرار والموظفين)
     merged_to = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='duplicate_tickets', verbose_name=_("تذكرة الدمج الأساسية"))
     current_assignee = models.ForeignKey('accounts.CustomUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='current_tasks', verbose_name=_("المسؤول الحالي"))
     
-    # 5. حالة التذكرة والتحديثات
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.NEW, verbose_name=_("حالة الشكوى"))
     specialist_message = models.TextField(null=True, blank=True, verbose_name=_("رسالة تحديث المختص"))
     citizen_rating = models.CharField(max_length=20, choices=RatingChoices.choices, null=True, blank=True, verbose_name=_("تقييم المواطن"))
     
-    # 6. التواريخ
     submitted_at = models.DateTimeField(auto_now_add=True, verbose_name=_("تاريخ التقديم"))
     updated_at = models.DateTimeField(auto_now=True, verbose_name=_("تاريخ التحديث"))
-    # 7. ميزة التأييد (Upvotes) والحالة الطارئة
     upvotes = models.ManyToManyField('accounts.CustomUser', related_name='upvoted_complaints', blank=True, verbose_name=_("المواطنون المتأثرون"))
     is_urgent = models.BooleanField(default=False, verbose_name=_("أولوية عاجلة"))
 
@@ -77,29 +66,22 @@ class ComplaintHistory(models.Model):
     id = models.AutoField(primary_key=True, verbose_name=_("رقم الحركة"))
     complaint = models.ForeignKey(Complaint, on_delete=models.CASCADE, related_name='history', verbose_name=_("معرف الشكوى"))
     
-    # من الذي قام بالإجراء؟ (قد يكون المواطن، الفرز، أو المختص)
     action_by = models.ForeignKey(CustomUser, on_delete=models.DO_NOTHING, related_name='actions_taken', verbose_name=_("المنفذ"))
     
-    # لمن تم تحويل الشكوى؟ (إذا تم التحويل)
     assigned_to = models.ForeignKey(CustomUser, on_delete=models.DO_NOTHING, null=True, blank=True, related_name='assigned_complaints', verbose_name=_("محالة إلى"))
     
-    # توثيق الحالة
     old_status = models.CharField(max_length=20, choices=Complaint.Status.choices, null=True, blank=True, verbose_name=_("الحالة السابقة"))
     new_status = models.CharField(max_length=20, choices=Complaint.Status.choices, verbose_name=_("الحالة الجديدة"))
     
-    # الملاحظات (مثل: سبب التحويل، أو رسالة المختص للمواطن)
     notes = models.TextField(null=True, blank=True, verbose_name=_("الملاحظات"))
     
     action_date = models.DateTimeField(auto_now_add=True, verbose_name=_("تاريخ الإجراء"))
-# يوضع هذا الكود داخل كلاس ComplaintHistory
     def save(self, *args, **kwargs):
-        super().save(*args, **kwargs) # حفظ الحركة في جدول التاريخ أولاً
+        super().save(*args, **kwargs) 
         
-        # هندسة المزامنة: تحديث حقل "المسؤول الحالي" في الشكوى الأصلية فوراً بناءً على الإحالة الجديدة
         if self.assigned_to and self.assigned_to != self.complaint.current_assignee:
             self.complaint.current_assignee = self.assigned_to
-            # نستخدم update_fields لتحسين الأداء وتجنب حفظ الشكوى بالكامل مرة أخرى
             self.complaint.save(update_fields=['current_assignee'])
     class Meta:
-        ordering = ['-action_date'] # ترتيب الحركات من الأحدث للأقدم
+        ordering = ['-action_date'] 
 
